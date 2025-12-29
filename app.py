@@ -1,16 +1,16 @@
 import streamlit as st
 import praw
 from datetime import datetime
+import time
 
 # 페이지 기본 설정
-st.set_page_config(page_title="Reddit 실시간 검색기", page_icon="🔍")
+st.set_page_config(page_title="Reddit 자동 감시기", page_icon="🕵️")
 
-# 제목 및 설명
-st.title("🔍 Reddit 키워드 검색기 (최신순)")
-st.markdown("Reddit **전체**에서 키워드를 검색하고, **최신순(New)**으로 결과를 보여줍니다.")
+st.title("🕵️ Reddit 30분 자동 검색기")
+st.markdown("키워드를 입력하고 **'모니터링 시작'**을 누르면, **30분마다** 자동으로 새 글을 찾아 화면을 갱신합니다.")
 
 # ---------------------------------------------------------
-# 1. API 설정 (Streamlit Secrets에서 가져오기)
+# 1. API 설정 (Streamlit Secrets)
 # ---------------------------------------------------------
 try:
     CLIENT_ID = st.secrets["reddit"]["client_id"]
@@ -21,71 +21,94 @@ except:
     st.stop()
 
 # ---------------------------------------------------------
-# 2. 검색 인터페이스
+# 2. 사이드바 설정 (검색어 및 주기)
 # ---------------------------------------------------------
-# 엔터 키를 쳐도 검색되게 하려면 st.form을 사용합니다.
-with st.form(key='search_form'):
-    col1, col2 = st.columns([4, 1])
+st.sidebar.header("설정")
+keyword = st.sidebar.text_input("감시할 키워드", placeholder="예: Python, Samsung")
+interval_min = st.sidebar.number_input("검색 주기 (분)", min_value=1, value=30, step=1)
 
-    with col1:
-        keyword = st.text_input("검색어를 입력하세요", placeholder="예: Python, Samsung, AI")
-    with col2:
-        # 폼 안의 버튼은 submit_button이어야 합니다.
-        submit_btn = st.form_submit_button(label='검색')
+# 상태 저장 (모니터링 중인지 아닌지)
+if 'is_running' not in st.session_state:
+    st.session_state['is_running'] = False
+
+# 버튼 클릭 시 상태 변경
+if st.sidebar.button("▶️ 모니터링 시작"):
+    st.session_state['is_running'] = True
+    st.rerun()  # 화면 새로고침하여 상태 반영
+
+if st.sidebar.button("⏹️ 중지"):
+    st.session_state['is_running'] = False
+    st.rerun()
 
 # ---------------------------------------------------------
-# 3. 검색 로직 실행
+# 3. 메인 로직 (반복 실행)
 # ---------------------------------------------------------
-if submit_btn and keyword:
-    st.divider()
-    st.subheader(f"Results for: '{keyword}'")
+# 결과를 보여줄 빈 공간(컨테이너) 미리 확보
+status_area = st.empty()
+result_area = st.empty()
 
-    try:
-        # Reddit 연결
-        reddit = praw.Reddit(
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            user_agent=USER_AGENT
-        )
+if st.session_state['is_running'] and keyword:
 
-        # ✨ 핵심 로직: 전체(all)에서 검색하고, 최신순(new)으로 정렬
-        # limit=30 : 결과 30개만 가져오기 (숫자 조절 가능)
-        search_results = reddit.subreddit("all").search(f"{keyword}", sort="new", limit=30)
+    # Reddit 연결 인스턴스 생성
+    reddit = praw.Reddit(
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        user_agent=USER_AGENT
+    )
 
-        count = 0
+    # 무한 반복 (브라우저가 켜져 있는 동안)
+    while True:
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # 결과 출력 반복문
-        for post in search_results:
-            count += 1
+        # 1. 상태 메시지 업데이트
+        with status_area.container():
+            st.info(f"🔄 **[{now_str}]** 검색 실행 중... (주기: {interval_min}분)")
 
-            # 날짜 변환 (유닉스 시간 -> 읽기 쉬운 시간)
-            dt_object = datetime.fromtimestamp(post.created_utc)
-            time_str = dt_object.strftime('%Y-%m-%d %H:%M:%S')
+        # 2. 검색 수행
+        try:
+            # 전체(all)에서 최신순(new)으로 20개 가져오기
+            search_results = reddit.subreddit("all").search(f"{keyword}", sort="new", limit=20)
 
-            # 디자인: Expander(접이식 상자) 사용
-            # 제목에 게시판 이름(r/Python)과 제목 표시
-            with st.expander(f"[{time_str}] r/{post.subreddit} : {post.title}"):
+            # 결과 화면 갱신
+            with result_area.container():
+                st.subheader(f"📡 '{keyword}' 검색 결과")
+                count = 0
+                for post in search_results:
+                    count += 1
+                    # 시간 변환
+                    dt_object = datetime.fromtimestamp(post.created_utc)
+                    time_str = dt_object.strftime('%Y-%m-%d %H:%M:%S')
 
-                # 내용이 있으면 보여주기
-                if post.selftext:
-                    st.info(post.selftext[:200] + "..." if len(post.selftext) > 200 else post.selftext)
-                elif post.url:
-                    # 이미지나 외부 링크인 경우
-                    st.write(f"🔗 링크: {post.url}")
+                    with st.expander(f"[{time_str}] r/{post.subreddit} : {post.title}"):
+                        st.write(f"**링크:** https://www.reddit.com{post.permalink}")
+                        if post.selftext:
+                            st.text(post.selftext[:100] + "...")
 
-                st.markdown(f"""
-                - **작성자:** {post.author}
-                - **추천수:** {post.score}
-                - **[Reddit에서 원본 보기](https://www.reddit.com{post.permalink})**
-                """)
+                if count == 0:
+                    st.warning("발견된 최신 글이 없습니다.")
+                else:
+                    st.success(f"최신 글 {count}개를 가져왔습니다.")
 
-        if count == 0:
-            st.warning("검색 결과가 없습니다. (오타가 있거나 너무 드문 키워드일 수 있습니다)")
-        else:
-            st.success(f"검색 완료! 최신 글 {count}개를 가져왔습니다.")
+        except Exception as e:
+            st.error(f"에러 발생: {e}")
 
-    except Exception as e:
-        st.error(f"에러가 발생했습니다: {e}")
+        # 3. 대기 (설정한 시간만큼 멈춤)
+        # 30분 대기면 화면이 멈춘 것처럼 보일 수 있으니, 프로그래스 바를 보여줌
+        with status_area.container():
+            st.success(f"✅ 검색 완료! 다음 검색까지 대기 중... ({now_str} 기준)")
 
-elif submit_btn and not keyword:
-    st.warning("검색어를 입력해주세요!")
+            # 진행률 바 표시 (시각적 효과)
+            progress_text = "다음 검색 대기 중..."
+            my_bar = st.progress(0, text=progress_text)
+
+            total_seconds = interval_min * 60
+            for i in range(100):
+                time.sleep(total_seconds / 100)  # 쪼개서 대기
+                my_bar.progress(i + 1, text=f"{progress_text} ({i + 1}%)")
+
+            my_bar.empty()  # 바 지우고 다시 루프 시작
+
+elif st.session_state['is_running'] and not keyword:
+    st.warning("⚠️ 사이드바에서 키워드를 먼저 입력해주세요.")
+else:
+    status_area.info("👈 사이드바에서 키워드를 입력하고 [시작] 버튼을 눌러주세요.")

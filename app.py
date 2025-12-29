@@ -85,7 +85,7 @@ if st.session_state['is_running'] and keyword:
                 else:
                     st.success(f"정확한 결과 {len(filtered_entries)}개를 찾았습니다!")
 
-                    for entry in filtered_entries[:10]:  # 10개만 표시
+                    for entry in filtered_entries[:100]:  # 10개만 표시
                         published_time = entry.get('published', '날짜 정보 없음')
 
                         with st.expander(f"{entry.title}"):

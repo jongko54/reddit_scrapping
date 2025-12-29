@@ -5,10 +5,10 @@ from datetime import datetime
 import urllib.parse
 
 # 페이지 기본 설정
-st.set_page_config(page_title="Reddit RSS 검색기", page_icon="⚡")
+st.set_page_config(page_title="Reddit 정밀 검색기", page_icon="🎯")
 
-st.title("⚡ Reddit 검색기 (No-API 버전)")
-st.markdown("Reddit API 키 없이, **RSS 피드**를 이용해 실시간 검색 결과를 보여줍니다.")
+st.title("🎯 Reddit 정밀 검색기 (RSS)")
+st.markdown("RSS에서 가져온 결과 중, **키워드가 정확히 포함된 글**만 골라냅니다.")
 
 # ---------------------------------------------------------
 # 1. 사이드바 설정
@@ -16,6 +16,7 @@ st.markdown("Reddit API 키 없이, **RSS 피드**를 이용해 실시간 검색
 st.sidebar.header("설정")
 keyword = st.sidebar.text_input("감시할 키워드", placeholder="예: Python")
 interval_min = st.sidebar.number_input("자동 검색 주기 (분)", min_value=1, value=30, step=1)
+use_strict_mode = st.sidebar.checkbox("정밀 필터 적용 (추천)", value=True)
 
 # 상태 저장
 if 'is_running' not in st.session_state:
@@ -39,50 +40,70 @@ if st.session_state['is_running'] and keyword:
 
     while True:
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # 1. 상태 메시지
-        status_area.info(f"🔄 **[{now_str}]** '{keyword}' 검색 중... (RSS 방식)")
+        status_area.info(f"🔄 **[{now_str}]** '{keyword}' 검색 및 필터링 중...")
 
         try:
-            # 2. RSS 주소 생성 (API 키 없이 접근 가능!)
-            # URL 인코딩 (한글/특수문자 처리)
-            encoded_keyword = urllib.parse.quote(keyword)
-            rss_url = f"https://www.reddit.com/search.rss?q={encoded_keyword}&sort=new"
+            # 1. RSS 주소 생성 (따옴표를 넣어 정확도 향상 시도)
+            # 예: "Python" 처럼 검색하게 만듦
+            search_query = f'"{keyword}"'
+            encoded_query = urllib.parse.quote(search_query)
 
-            # 피드 읽기
+            # sort=new: 최신순
+            rss_url = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
+
+            # 2. 데이터 가져오기
             feed = feedparser.parse(rss_url)
 
-            # 결과 출력
-            with result_area.container():
-                st.subheader(f"📡 '{keyword}' 검색 결과")
+            # 3. [핵심] 파이썬으로 2차 필터링 (엄격한 검사)
+            filtered_entries = []
 
-                if len(feed.entries) == 0:
-                    st.warning("결과를 가져오지 못했습니다. (검색어가 없거나 차단됨)")
+            for entry in feed.entries:
+                title = entry.title.lower()
+                # RSS는 content가 리스트 형태거나 없을 수 있음
+                content = ""
+                if 'summary' in entry:
+                    content = entry.summary.lower()
+                elif 'content' in entry:
+                    content = entry.content[0].value.lower()
+
+                target = keyword.lower()
+
+                # 사용자가 정밀 필터를 켰다면?
+                if use_strict_mode:
+                    # 제목이나 본문에 키워드가 확실히 있어야만 통과!
+                    if target in title or target in content:
+                        filtered_entries.append(entry)
                 else:
-                    st.success(f"최신 글 {len(feed.entries)}개를 가져왔습니다.")
+                    filtered_entries.append(entry)
 
-                    for entry in feed.entries[:10]:  # 최대 10개만 표시
-                        # 날짜 정리
+            # 4. 결과 출력
+            with result_area.container():
+                st.subheader(f"🎯 '{keyword}' 정밀 검색 결과")
+
+                if len(filtered_entries) == 0:
+                    st.warning("검색 결과가 없거나, 필터링되어 제외되었습니다.")
+                else:
+                    st.success(f"정확한 결과 {len(filtered_entries)}개를 찾았습니다!")
+
+                    for entry in filtered_entries[:10]:  # 10개만 표시
                         published_time = entry.get('published', '날짜 정보 없음')
 
                         with st.expander(f"{entry.title}"):
                             st.write(f"**작성일:** {published_time}")
                             st.write(f"**링크:** {entry.link}")
-                            # RSS는 본문이 'summary'나 'content'에 들어있음
-                            content = entry.get('summary', '')[:200]
-                            st.markdown(content, unsafe_allow_html=True)
+                            # 본문 미리보기 (HTML 태그 제거는 복잡해서 생략, RSS 기본 제공)
+                            st.markdown(entry.get('summary', '')[:200], unsafe_allow_html=True)
                             st.write(f"[원문 보러가기]({entry.link})")
 
         except Exception as e:
             st.error(f"에러 발생: {e}")
 
-        # 3. 대기 로직 (Progress Bar)
-        status_area.success(f"✅ 검색 완료! {interval_min}분 뒤에 다시 검색합니다.")
+        # 5. 대기 로직
+        status_area.success(f"✅ 완료! {interval_min}분 뒤에 다시 검색합니다.")
 
         progress_bar = status_area.progress(0)
         total_seconds = interval_min * 60
 
-        # 100단계로 나눠서 진행바 채우기
         for i in range(100):
             time.sleep(total_seconds / 100)
             progress_bar.progress(i + 1)

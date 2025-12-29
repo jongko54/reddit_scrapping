@@ -1,114 +1,95 @@
 import streamlit as st
-import praw
-from datetime import datetime
+import feedparser
 import time
+from datetime import datetime
+import urllib.parse
 
 # 페이지 기본 설정
-st.set_page_config(page_title="Reddit 자동 감시기", page_icon="🕵️")
+st.set_page_config(page_title="Reddit RSS 검색기", page_icon="⚡")
 
-st.title("🕵️ Reddit 30분 자동 검색기")
-st.markdown("키워드를 입력하고 **'모니터링 시작'**을 누르면, **30분마다** 자동으로 새 글을 찾아 화면을 갱신합니다.")
-
-# ---------------------------------------------------------
-# 1. API 설정 (Streamlit Secrets)
-# ---------------------------------------------------------
-try:
-    CLIENT_ID = st.secrets["reddit"]["client_id"]
-    CLIENT_SECRET = st.secrets["reddit"]["client_secret"]
-    USER_AGENT = st.secrets["reddit"]["user_agent"]
-except:
-    st.error("🚨 API 키 설정이 필요합니다! Streamlit Secrets를 확인해주세요.")
-    st.stop()
+st.title("⚡ Reddit 검색기 (No-API 버전)")
+st.markdown("Reddit API 키 없이, **RSS 피드**를 이용해 실시간 검색 결과를 보여줍니다.")
 
 # ---------------------------------------------------------
-# 2. 사이드바 설정 (검색어 및 주기)
+# 1. 사이드바 설정
 # ---------------------------------------------------------
 st.sidebar.header("설정")
-keyword = st.sidebar.text_input("감시할 키워드", placeholder="예: Python, Samsung")
-interval_min = st.sidebar.number_input("검색 주기 (분)", min_value=1, value=30, step=1)
+keyword = st.sidebar.text_input("감시할 키워드", placeholder="예: Python")
+interval_min = st.sidebar.number_input("자동 검색 주기 (분)", min_value=1, value=30, step=1)
 
-# 상태 저장 (모니터링 중인지 아닌지)
+# 상태 저장
 if 'is_running' not in st.session_state:
     st.session_state['is_running'] = False
 
-# 버튼 클릭 시 상태 변경
 if st.sidebar.button("▶️ 모니터링 시작"):
     st.session_state['is_running'] = True
-    st.rerun()  # 화면 새로고침하여 상태 반영
+    st.rerun()
 
 if st.sidebar.button("⏹️ 중지"):
     st.session_state['is_running'] = False
     st.rerun()
 
 # ---------------------------------------------------------
-# 3. 메인 로직 (반복 실행)
+# 2. 메인 로직
 # ---------------------------------------------------------
-# 결과를 보여줄 빈 공간(컨테이너) 미리 확보
 status_area = st.empty()
 result_area = st.empty()
 
 if st.session_state['is_running'] and keyword:
 
-    # Reddit 연결 인스턴스 생성
-    reddit = praw.Reddit(
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
-        user_agent=USER_AGENT
-    )
-
-    # 무한 반복 (브라우저가 켜져 있는 동안)
     while True:
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # 1. 상태 메시지 업데이트
-        with status_area.container():
-            st.info(f"🔄 **[{now_str}]** 검색 실행 중... (주기: {interval_min}분)")
+        # 1. 상태 메시지
+        status_area.info(f"🔄 **[{now_str}]** '{keyword}' 검색 중... (RSS 방식)")
 
-        # 2. 검색 수행
         try:
-            # 전체(all)에서 최신순(new)으로 20개 가져오기
-            search_results = reddit.subreddit("all").search(f"{keyword}", sort="new", limit=20)
+            # 2. RSS 주소 생성 (API 키 없이 접근 가능!)
+            # URL 인코딩 (한글/특수문자 처리)
+            encoded_keyword = urllib.parse.quote(keyword)
+            rss_url = f"https://www.reddit.com/search.rss?q={encoded_keyword}&sort=new"
 
-            # 결과 화면 갱신
+            # 피드 읽기
+            feed = feedparser.parse(rss_url)
+
+            # 결과 출력
             with result_area.container():
                 st.subheader(f"📡 '{keyword}' 검색 결과")
-                count = 0
-                for post in search_results:
-                    count += 1
-                    # 시간 변환
-                    dt_object = datetime.fromtimestamp(post.created_utc)
-                    time_str = dt_object.strftime('%Y-%m-%d %H:%M:%S')
 
-                    with st.expander(f"[{time_str}] r/{post.subreddit} : {post.title}"):
-                        st.write(f"**링크:** https://www.reddit.com{post.permalink}")
-                        if post.selftext:
-                            st.text(post.selftext[:100] + "...")
-
-                if count == 0:
-                    st.warning("발견된 최신 글이 없습니다.")
+                if len(feed.entries) == 0:
+                    st.warning("결과를 가져오지 못했습니다. (검색어가 없거나 차단됨)")
                 else:
-                    st.success(f"최신 글 {count}개를 가져왔습니다.")
+                    st.success(f"최신 글 {len(feed.entries)}개를 가져왔습니다.")
+
+                    for entry in feed.entries[:10]:  # 최대 10개만 표시
+                        # 날짜 정리
+                        published_time = entry.get('published', '날짜 정보 없음')
+
+                        with st.expander(f"{entry.title}"):
+                            st.write(f"**작성일:** {published_time}")
+                            st.write(f"**링크:** {entry.link}")
+                            # RSS는 본문이 'summary'나 'content'에 들어있음
+                            content = entry.get('summary', '')[:200]
+                            st.markdown(content, unsafe_allow_html=True)
+                            st.write(f"[원문 보러가기]({entry.link})")
 
         except Exception as e:
             st.error(f"에러 발생: {e}")
 
-        # 3. 대기 (설정한 시간만큼 멈춤)
-        # 30분 대기면 화면이 멈춘 것처럼 보일 수 있으니, 프로그래스 바를 보여줌
-        with status_area.container():
-            st.success(f"✅ 검색 완료! 다음 검색까지 대기 중... ({now_str} 기준)")
+        # 3. 대기 로직 (Progress Bar)
+        status_area.success(f"✅ 검색 완료! {interval_min}분 뒤에 다시 검색합니다.")
 
-            # 진행률 바 표시 (시각적 효과)
-            progress_text = "다음 검색 대기 중..."
-            my_bar = st.progress(0, text=progress_text)
+        progress_bar = status_area.progress(0)
+        total_seconds = interval_min * 60
 
-            total_seconds = interval_min * 60
-            for i in range(100):
-                time.sleep(total_seconds / 100)  # 쪼개서 대기
-                my_bar.progress(i + 1, text=f"{progress_text} ({i + 1}%)")
+        # 100단계로 나눠서 진행바 채우기
+        for i in range(100):
+            time.sleep(total_seconds / 100)
+            progress_bar.progress(i + 1)
 
-            my_bar.empty()  # 바 지우고 다시 루프 시작
+        progress_bar.empty()
 
 elif st.session_state['is_running'] and not keyword:
-    st.warning("⚠️ 사이드바에서 키워드를 먼저 입력해주세요.")
+    st.warning("왼쪽 사이드바에서 키워드를 입력해주세요!")
 else:
-    status_area.info("👈 사이드바에서 키워드를 입력하고 [시작] 버튼을 눌러주세요.")
+    status_area.info("👈 키워드를 입력하고 [시작] 버튼을 눌러주세요.")

@@ -3,7 +3,7 @@ import feedparser, urllib.parse
 
 app = FastAPI()
 
-@app.get("/api/rss")
+@app.get("/rss")
 def get_rss(keyword: str = "bts", limit: int = 10):
     q = urllib.parse.quote(f'"{keyword}"')
     rss_url = f"https://www.reddit.com/search.rss?q={q}&sort=new"

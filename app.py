@@ -87,7 +87,7 @@ if 'is_running' not in st.session_state:
 
 # 사이드바
 st.sidebar.header("설정")
-keyword = st.sidebar.text_input("감시할 키워드", value=st.session_state['keyword'])
+keyword = st.sidebar.text_input("검색", value=st.session_state['keyword'])
 interval_min = st.sidebar.number_input("자동 검색 주기 (분)", min_value=1, value=30, step=1)
 use_strict_mode = st.sidebar.checkbox("정밀 필터 적용 (추천)", value=True)
 

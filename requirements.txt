@@ -2,3 +2,4 @@ streamlit
 feedparser
 fastapi
 uvicorn
+python-dotenv  # (환경변수 관리용, 선택)
